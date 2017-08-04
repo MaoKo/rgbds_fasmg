@@ -1,5 +1,6 @@
 postpone
-    purge ?
+    purge   ?
+
 ;    if (defined _unionStart)
 ;        _level = 0
 ;        while (defined _unionStart)

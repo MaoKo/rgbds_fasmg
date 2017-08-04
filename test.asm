@@ -68,10 +68,4 @@ include "rgbds_fasmg.asm"
 ;            de
 
 _interpret_line
-display "ABC", $A << 0 << 1
-
-_abc:   MACRO
-            display "TEST", $A
-        ENDM
-
-_abc "HE"
+a<<0<<0 % 2

@@ -67,12 +67,16 @@ macro forward?
     indx    (%)
 end macro
 
-macro _iterate_string? iter?*, str?*
-    local _result, _char, _string
+macro _iterate_string?! iter?*, str?*
     _is_string str
     _string = (+str)
+    _back_result        equ 
+    match _, _result
+        _back_result    equ _
+    end match
     _result equ
     repeat (lengthof (str)), i:0
+        local   _char
         _char   equ (string ((_string shr (i * $08)) and $FF))
         match _, _result
             _result equ _result,
@@ -80,12 +84,14 @@ macro _iterate_string? iter?*, str?*
         _result equ _result _char
     end repeat
     match _, _result
-        outscope iterate iter, _
+        iterate iter, _
 end macro
 
 macro _end_iterate_string?!
         end iterate
     end match
+    restore _string
+    _result equ _back_result
 end macro
 
 macro _find_item? predicate?*, argument?*, list?*&

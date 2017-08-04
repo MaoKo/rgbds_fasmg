@@ -65,9 +65,9 @@ end macro
 
 macro _rpn_parser?:     offset?*, expression?*
     local _operator, _value, _check_div
-    iterate i,  <*      _MUL,   /   _DIV,    %   _MOD>                          ,\ 
+    iterate i,  <*      _MUL,   /   _DIV,    mod _MOD>                          ,\ 
                 <shl    _SHL,   shr _SHR>                                       ,\
-                <|      _OR,    &   _AND,    ^   _XOR>                          ,\
+                <|      _OR,    &   _AND,    xor _XOR>                          ,\
                 <+      _ADD,   -   _SUB>                                       ,\
                 <gt     _LOGGT, ge  _LOGGE,  lt  _LOGLT, le  _LOGLE, !== _LOGNE>,\
                 <||     _LOGOR, &&  _LOGAND, === _LOGEQU>

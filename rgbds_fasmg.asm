@@ -196,10 +196,137 @@ macro _interpret_off
     end macro
 end macro
 
+; TODO ADD . TO REFER TO THE MOST GLOBAL LABEL
+macro _expand_local_label?: _result?*, _input?*, _follow?:0
+    _result equ
+    local _after, _before, _target, _continue, _r1, _r2
+    _continue   = 1
+    _after      = 0
+    _before     = 0
+
+    restore _target, _r1, _r2
+    _target     equ
+
+    local _syntax_error
+    _syntax_error = 0
+
+    match  _1 .= _local _2, _input
+        _syntax_error = 1
+    else match .= _local _, _input
+        _syntax_error = 1
+    else match _ .= _local, _input
+        _syntax_error = 1
+    else match .= _local, _input
+        _syntax_error = 1
+    else match _ ., _input
+        _syntax_error = 1
+    end match
+
+    _inline_if (_syntax_error), err "Space can't follow dot"
+
+    match  _1= . _local _2, _input
+        _expand_local_label _r1, _1
+        _expand_local_label _r2, _2, 1
+        _before = 1
+        _after  = 1
+        _target equ `_local
+    else match . _local _, _input
+        _expand_local_label _result, _, 1
+        _target equ `_local
+        _after  = 1
+    else match _= . _local, _input
+        _expand_local_label _result, _
+        _target equ `_local
+        _before = 1
+    else match . _local, _input
+        _target equ `_local
+    else
+        _result equ _input
+        _continue   = 0
+    end match
+
+    if (_continue)
+        local _is_symbol, _new_target
+        _new_target equ ".", _target
+
+        macro _check_symbol? _order?*, str?*
+            _is_symbol = 0
+            _iterate_string char, str
+                _order
+                    _inline_if ((char >= 'a') & (char <= 'z')), _is_symbol = 1
+                    break
+            _end_iterate_string
+        end macro
+
+        macro eval? _variable?*, line?&
+            eval "_variable equ ", line
+        end macro
+
+        _check_symbol forward, _target
+        if (~(_is_symbol))
+            _new_target     equ _target
+            _inline_if      (_target = "."), err "No several dot can be consecutive"
+        end if
+
+        local _result_str, _r1_str, _r2_str
+        match _, _result
+            _result_str equ `_
+        end match
+        match _, _r1
+            _r1_str     equ `_
+        end match
+        match _, _r2
+            _r2_str     equ `_
+        end match
+
+        if (_before)
+            _inline_if (_after),\
+                <eval _result, _r1_str, " ", _last_label, _new_target, _r2_str>,\
+                <eval _result, _result_str, " ", _last_label, _new_target>
+        else if (_after)
+            _inline_if (~(_follow)),\
+                    <eval _result, _last_label, _new_target, _result_str>,\
+                    <eval _result, _new_target, _result_str>
+        else
+            _inline_if (~(_follow)),\
+                    <eval _result, _last_label, _new_target>,\
+                    <eval _result, _new_target>
+        end if
+        purge eval?, _check_symbol?
+    end if
+end macro
+
+macro _expand_operator?: _symbol?*, _result?*, _input?*
+    local _r1, _r2, _continue
+    irpv _value, _symbol
+        _continue = 0
+        match _item =, _replace, _value
+            match _1 _item _2, _input
+                _expand_operator _symbol, _r1, _1
+                _expand_operator _symbol, _r2, _2
+                _result     equ _r1 _replace _r2
+            else match _ _item, _input
+                _expand_operator _symbol, _r1, _
+                _result     equ _r1 _replace
+            else match _item _, _input
+                _expand_operator _symbol, _r1, _
+                _result     equ _replace _r1
+            else match _item, _input
+                _result     equ _replace
+            else
+                _continue = 1
+            end match
+            _inline_if (~(_continue)), break
+        end match
+    end irpv
+    _inline_if (_continue), _result equ _input
+end macro
+
 macro _interpret_line?:
+    display "INTERPRET", $A
     macro ?! params&
         display "PARAMS = ", `params, $A
-        local _new_params
+        local _new_params, _symbol
         _new_params equ params
         if ((_start_macro) | (_start_rept))
             local _result
@@ -207,36 +334,29 @@ macro _interpret_line?:
             eval    "_new_params equ ", _result
         end if
 
-        local _change
-        _change = 1
-
         _symbol equ  <<, shl
         _symbol equ  >>, shr
         _symbol equ >==,  ge
         _symbol equ <==,  le
         _symbol equ   >,  gt
         _symbol equ   <,  lt
+        _symbol equ  =%, mod
+        _symbol equ  =^, xor
+        _symbol equ   +,   +
+        _symbol equ   -,   -
+        _symbol equ   *,   *
+        _symbol equ   /,   /
 
-        irpv _value, _symbol
-            while (_change)
-                _change = 1
-                match _item =, _replace, _value
-                    match _1 _item _2, _new_params
-                        _new_params equ _1 _replace _2
-                    else match _ _item, _new_params
-                        _new_params equ _ _replace
-                    else match _item _, _new_params
-                        _new_params equ _replace _
-                    else match _item, _new_params
-                        _new_params equ _replace
-                    else
-                        _change = 0
-                    end match
-                end match
-            end while
-        end irpv
-
-        ;match  _ . 
+        _expand_operator _symbol, _new_params, _new_params
+    
+        match _, _new_params
+            display "`_ = ", `_, $A
+        end match
+        err ""
+    
+;        local _input
+;        _input  equ _new_params
+;        _expand_local_label _new_params, _input
 
         macro invoker?
         end macro
@@ -244,7 +364,7 @@ macro _interpret_line?:
             macro invoker?  
                 esc _
             end macro
-            _search_label
+;            _search_label
             match =MACRO? _line, _
                 _interpret_off
             end match
@@ -346,8 +466,8 @@ WRAMX   := 5
 OAM     := 7
 HRAM    := 4
 
-macro section?  name?*, type?*, options?&
-    _reset
+macro section?  name?*, type?*, options?&   
+    restruc ?
     _is_string name, "Name section must be a string"
 
     local _valid, _found, _type, _org, _bank, _align
@@ -386,12 +506,12 @@ macro section?  name?*, type?*, options?&
     else match option, options
         match =BANK? [ _ ], option
             _signed _
-            _bank   = _
+           _bank   = _
         else match =ALIGN? [ _ ], option
             _signed _
             _align  = _
         else
-            err "Syntax error"
+           err "Syntax error"
         end match
     end match
 
@@ -436,7 +556,6 @@ macro section?  name?*, type?*, options?&
     else
         err "TODO"
     end if
-    _search_label
 end macro
 
 macro _define   kind?*, def?*, res?*, kpatch?*
@@ -515,7 +634,8 @@ macro _prefix_label? result?*, name?*
 end macro
 
 macro _search_label?
-    struc (name?) ?! line&
+    display "SEARCH", $A
+    struc (name?) ? line&
         display "NAME = ", `name, $A
         display "LINE = ", `line, $A
         macro invoker?
