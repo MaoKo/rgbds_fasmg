@@ -639,11 +639,6 @@ macro incbin? arguments?*&
     end match
 end macro
 
-macro ds? count?*
-    _signed count
-    emit count: $00
-end macro
-
 macro union?
     _unionStart =: $
 end macro
@@ -663,6 +658,7 @@ macro endu?!
 end macro
 
 postpone
+    __restruc
     if (defined _unionStart)
         _level = 0
         while (defined _unionStart)
@@ -672,13 +668,28 @@ postpone
         err "Unterminated UNION construct (", _level + "0", " levels)!"
     end if
 
+    _magic  := "RGB6"
     purge db?, dw?, dl?
 
-    db "RGB6"
+    db _magic
     dd _count_symbols
     dd _count_section
     
-    repeat _count_symbols
+    repeat _count_symbols, i:1
+        if (_label_local_#i)
+            db _label_last_#i
+            db "."
+        end if
+        db _label_#i
+        db 0
+        db _label_scope_#i
+        if (_label_scope_#i <> _IMPORT)
+            db __file__
+            db 0
+            dd _label_line_#i
+            dd _label_section_id_#i
+            dd _label_offset_#i
+        end if
     end repeat
 
     repeat _count_section, i:1
@@ -712,6 +723,7 @@ OAM     := 7
 HRAM    := 4
 
 macro section?  name?*, type?*, options?&
+    __restruc
     if (~(name eqtype ""))
         err ""
     end if
@@ -789,7 +801,12 @@ macro section?  name?*, type?*, options?&
             end virtual
             _db EQU i
         end repeat
+        if (_org = -1)
+            _org = 0
+        end if
+        section _org
     end if
+    _search_label
 end macro
 
 _count_symbols = 0
@@ -799,15 +816,23 @@ macro _define   kind?*, def?*, res?*
     macro kind? line?&
         if (_count_section = 0)
             err "Code generation before SECTION directive"
-        else match , line
-            res
         else
             repeat 1, i:_count_section
-                virtual _area_#i
-                    def line
-                end virtual
+                match _, line
+                    if ((_section_type_#i <> ROM0) & (_section_type_#i <> ROMX))
+                        err "Section '", _section_#i,\
+                            "' cannot contain code or data (not ROM0 or ROMX)"
+                    end if
+                    virtual _area_#i
+                        def line
+                    end virtual
+                else
+                    virtual _area_#i
+                        res 1
+                    end virtual
+                end match
             end repeat
-        end match
+        end if
     end macro
 end macro
 
@@ -815,3 +840,59 @@ _define db, db, rb
 _define dw, dw, rw
 _define dl, dd, rd
 
+macro ds? count?*
+    _signed count
+    repeat count
+        db
+    end repeat
+end macro
+
+_LOCAL  := 0
+_IMPORT := 1
+_EXPORT := 2
+
+_last_label = ""
+
+macro _search_label?
+    struc (name?) ?! line&
+        if (~(`name eq "__restruc"))
+            label name at $
+            local _local, _local_name
+
+            _local = 0
+            _local_name = `name
+            match . _NAME?, name
+                _local = 1
+                _local_name = `_NAME
+            else
+                _last_label = `name
+            end match
+
+            if (used name)
+                if (~(_count_section))
+                    err "getsecid: Unknown section"
+                end if
+                _count_symbols = _count_symbols + 1
+                repeat 1, i:_count_symbols
+                    _label_#i               = _local_name
+                    _label_local_#i         = _local
+                    if (_local)
+                        _label_last_#i      = _last_label
+                    end if
+                    _label_scope_#i         = _LOCAL
+                    _label_line_#i          = __line__
+                    _label_section_id_#i    = (_count_section - 1)
+                    _label_offset_#i        = $
+                end repeat
+            end if
+        else
+            restruc ?
+        end if
+    end struc
+end macro
+
+_search_label
+
+SECTION "", ROM0
+abc:
+db abc
