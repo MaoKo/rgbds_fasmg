@@ -1,634 +1,224 @@
-macro comment? begin?*
-    local _reverse
-    _reverse = string (`begin bswap (lengthof `begin))
-    macro ?! line?&
-        if (`line = _reverse)
-            purge ?
-        end if
-    end macro
+include "z80.asm"
+format binary as 'o'
+
+macro _append_string? result?*, str?*
+    local _result, _length, _char, _double
+    _result = result
+    _iterate_string char, str
+        _length = lengthof  (_result)
+        _result = string    (_result or (char shl (_length * $08)))
+    _end_iterate_string
+    result = _result
 end macro
 
-element register?
-
-element B?      : register + 000b
-element C?      : register + 001b
-element D?      : register + 010b
-element E?      : register + 011b
-element H?      : register + 100b
-element L?      : register + 101b
-element _MHL?   : register + 110b
-element A?      : register + 111b
-
-iterate i, 1,2,3
-    element coef#i?
-end iterate
-
-element BC?     : (coef1 *  0b) + (coef2 *  00b) + (coef3 *  00b)
-element DE?     : (coef1 *  1b) + (coef2 *  01b) + (coef3 *  01b)
-element HL?     : (coef1 * -1b) + (coef2 *  10b) + (coef3 *  10b)
-element SP?     : (coef1 * -1b) + (coef2 *  11b) + (coef3 * -01b)
-element AF?     : (coef1 * -1b) + (coef2 * -01b) + (coef3 *  11b)
-
-element CC?
-
-NZ? := CC + 00b
-Z?  := CC + 01b
-NC? := CC + 10b
-;element  C?     := CC + 11b
-
-macro   _find_item? predicate?*, argument?*, list?*&
-    iterate _item, list
-        match =_item?, argument
-            predicate = 1
-            break
-        end match
-    end iterate
-end macro
-
-macro   _inline_if? condition?*, true?*, false?*
-    if (condition)
-        true
-    else
-        false
-    end if
-end macro
-
-macro   _is_memory? symbolic?*, argument?*&
-    match       [ memory ], argument
-        symbolic equ memory
-    else match  ( memory ), argument
-        symbolic equ memory
-    end match
-end macro
-
-macro   _match_register?    argument?*
-    local   _valid, _memory
-    _valid      = 0
-    _memory     equ
-    _is_memory  _memory, argument
-    match   _, _memory
-        match   =HL?, _
-            _metadata   = _MHL metadata 1
-            _valid      = 1
-        else
-            err ""
-        end match
-    else
-        _value = argument
-        if (_value eq _value element 1)
-            _find_item  _valid, <argument>, B,C,D,E,H,L,A
-            if (~(_valid))
-                _find_item  _valid, <argument>, BC,DE,HL,SP,AF
+macro _insert_string? result?*, str?*
+    local _result, _char, _double
+    _result = result
+    _double = 0
+    _iterate_string char, str
+        _char = char
+        if (_double)
+            _double = 0
+        else if (char = "'")
+            if (%% <> %)
+                indx (% + 1)
+                _inline_if (char = "'"), _double = 1
             end if
-            if (_valid)
-                _metadata = _value metadata 1
-            end if
+            _inline_if (~(_double)), _char = '"'
         end if
-    end match
-    if (~(_valid))
-        err     ""
-    end if
+        _append_string _result, _char
+    _end_iterate_string
+    result = _result
 end macro
 
-macro _match_condition? argument?*
-    local   _valid
-    _valid  = 0
-    _find_item _valid, argument, NZ,Z,NC,C
-    if (~(_valid))
-        err ""
-    end if
+macro _eval_string? result?*, expand?*
+    local _expand
+    eval "_expand = ", expand
+    _is_string _expand
+    _insert_string result, _expand
 end macro
 
-macro _scale? number?*
-    if ((_metadata scale number) = -01b)
-        err ""
-    end if
-end macro
-
-macro _ensure?  kind?*
-    match =R08?, kind
-        if (~(_metadata relativeto register))
-            err     ""
-        end if
-    else match =R16?, kind
-        if (_metadata relativeto register)
-            err     ""
-        end if
-    else
-        err         ""
-    end match
-end macro
-
-macro   _bound? value?*, bitness?*, kind?
-    local _value, _slimit, _ulimit
-    _value = value
-    _ulimit = (1 shl bitness)
-    _slimit = (1 shl (bitness - 1))
-    match =SIGNED?, kind
-        if ((_value >= _slimit) | (_value < (-_slimit)))
-            err ""
-        end if
-    else match =UNSIGNED?, kind
-        if ((_value < $00) | (_value >= _ulimit))
-            err ""
-        end if
-    else match , kind
-        if ((_value < (-_slimit)) | (_value >= _ulimit))
-            err ""
-        end if
-    else
-        err     ""
-    end match
-end macro
-
-macro   nop?
-    db  00000000b
-end macro
-
-_inc?   := 0b
-_dec?   := 1b
-
-macro   _build_operation?   type?*
-    macro type? argument?*
-        _match_register argument
-        if (_metadata relativeto register)
-            db (((_metadata - register) shl $03) or (10b shl $01) or (_#type))
+macro _expand_string? result?*, str?*
+    _expand_macro_param result, str
+    local _brace, _expand, _result
+    _result = ""
+    _brace  = 0
+    _iterate_string char, result
+        if (_brace)
+            _inline_if (char = "}"), _brace = 0, <_append_string _expand, char>
+            _inline_if (~(_brace)),  <_eval_string _result, _expand>
+        else if (char = "{")
+            _expand = ""
+            _brace  = 1
         else
-            _scale $02
-            db (((_metadata scale $02) shl $04) or (_#type shl $03) or (011b))
+            _append_string _result, char
         end if
-    end macro
+    _end_iterate_string
+    _inline_if (_brace), err "Missing }"
+    result = _result
 end macro
 
-iterate _operation, inc, dec
-    _build_operation    _operation
-end iterate
-
-macro   stop?
-    db  00010000b
-end macro
-
-macro   jr? arguments?*&
-    local   _destination
-    match   condition =, target, arguments
-        _match_condition condition
-        _destination    = target
-        db  ((001b shl $05) or ((condition - CC) shl $03))
-    else
-        _destination    = arguments
-        db  00011000b
-    end match
-    _bound (_destination - $02), $08, SIGNED
-    db  (_destination - $02)
-end macro
-
-macro   daa?
-    db  00100111b
-end macro
-
-macro   cpl?
-    db  00101111b
-end macro
-
-macro   scf?
-    db  00110111b
-end macro
-
-macro   ccf?
-    db  00111111b
-end macro
-
-macro   halt?
-    db  01110110b
-end macro
-
-_add?   := 000b
-_adc?   := 001b
-_sub?   := 010b
-_sbc?   := 011b
-_and?   := 100b
-_xor?   := 101b
-_or?    := 110b
-_cp?    := 111b
-
-macro _build_alu?   type?*
-    macro type? _A?*, argument?*
-        local _value
-        match =A?, _A
-            _value = argument
-            if ((_value eqtype $00) & ((elementsof _value) = 0))
-                _bound _value, $08
-                db ((11b shl $06) or (_#type shl $03) or (110b)), _value
+macro _expand_macro_param? result?*, str?*
+    local _result, _escape, _not_defined, _char
+    _not_defined = 0
+    _escape = 0
+    _result = ""
+    _iterate_string char, str
+        _char = char
+        if (_escape)
+            _char = ""
+            if ((char >= "1") & (char <= "9"))
+                repeat 1, i:char - "0"
+                    _insert_string _result, _a#i
+                end repeat
+            else if (char = "@")
+                _inline_if (~(_random_label)), err "Only available in MACRO/REPT block"
+                _append_string _result, "_"
+                repeat 1, i:_random_count
+                    _append_string _result, `i
+                end repeat
+                _random_use = 1
             else
-                _match_register argument
-                _ensure r08
-                db ((10b shl $06) or (_#type shl $03) or (_metadata - register))
+                _append_string _result, "\"
+                _char = char
             end if
-        else
-            err ""
-        end match
-    end macro
-
-    macro type? arguments?*&
-        match destination =, source, arguments
-            type destination, source
-        else
-            type A, arguments
-        end match
-    end macro
+            _escape = 0
+        else if (char = "\")
+            _escape = 1
+            _char   = ""
+        end if
+        _append_string _result, _char
+    _end_iterate_string
+    result = _result
 end macro
 
-iterate _alu, add, adc, sub, sbc, and, xor, or, cp
-    _build_alu  _alu
-    match =_alu?, ADD
-        macro add? arguments?*&
-            match =HL? =, source, arguments
-                _match_register source
-                _ensure r16
-                _scale  $02
-                db (((_metadata scale $02) shl $04) or (1001b))
-            else match =SP? =, number, arguments
-                _bound number, $08, SIGNED
-                db 11101000b, number
-            else
-                add arguments
-            end match
-        end macro
-    end match
-end iterate
-
-_pop?   := _inc
-_push?  := _dec
-
-macro   _build_operation?   type?*
-    macro type? argument?*
-        _match_register argument
-        _ensure r16
-        _scale $03
-        db ((11b shl $06) or ((_metadata scale $03) shl $04) or (_#type shl $02) or (01b))
-    end macro
-end macro
-
-iterate _operation, pop, push
-    _build_operation    _operation
-end iterate
-
-macro   rst?    argument?*
-    if (argument mod $08)
-        err ""
-    end if
-    _bound  (argument shr $03), $03, UNSIGNED
-    db ((11b shl $06) or (argument) or (111b))
-end macro
-
-macro   ret?    condition?& 
-    match _condition, condition
-        _match_condition _condition
-        db ((110b shl $05) or ((_condition - CC) shl $03))
-    else
-        db 11001001b
-    end match
-end macro
-
-macro   reti?
-    db 11011001b
-end macro
-
-macro   jp? arguments?*&
-    match =HL?, arguments
-        db 11101001b
-    else
-        local _destination
-        match condition =, target, arguments
-            _match_condition condition
-            _destination = target
-            db ((110b shl $05) or ((condition - CC) shl $03) or (010b))
-        else
-            _destination = arguments
-            db 11000011b
-        end match
-        _bound _destination, $10
-        dw _destination
-    end match
-end macro
-
-macro   call?   argument?*&
-    local _destination
-    match condition =, target, argument
-        _match_condition condition
-        _destination = target
-        db ((110b shl $05) or ((condition - CC) shl $03) or (110b))
-    else
-        _destination = argument
-        db 11001101b
-    end match
-    _bound _destination, $10
-    dw _destination
-end macro
-
-macro   di?
-    db 11110011b
-end macro
-
-macro   ei?
-    db 11111011b
-end macro
-
-_left   := 0b
-_right  := 1b
-
-macro   _build_direction?   type?*
-    local _direction
-    match =L?, type
-        _direction = _left
-    else match =R?, type
-        _direction = _right
-    else
-        err ""
-    end match
-    macro r#type#ca?
-        db ((_direction shl $03) or (111b))
-    end macro
-    macro r#type#a?
-        db ((0001b shl $04) or (_direction shl $03) or (111b))
-    end macro
-    macro r#type#c? argument?*
-        _match_register argument
-        _ensure r08
-        db 11001011b, ((_direction shl $03) or (_metadata - register))
-    end macro
-    macro r#type?   argument?*
-        _match_register argument
-        _ensure r08
-        db 11001011b, ((01b shl $04) or (_direction shl $03) or (_metadata - register))
-    end macro
-    macro s#type#a? argument?*
-        _match_register argument
-        _ensure r08
-        db 11001011b, ((10b shl $04) or (_direction shl $03) or (_metadata - register))
-    end macro
-end macro
-
-iterate _direction, L, R
-    _build_direction _direction
-end iterate
-
-macro swap? argument?*
-    _match_register argument
-    _ensure r08
-    db 11001011b, ((110b shl $03) or (_metadata - register))
-end macro
-
-macro srl?  argument?*
-    _match_register argument
-    _ensure r08
-    db 11001011b, ((111b shl $03) or (_metadata - register))
-end macro
-
-macro bit?  offset?*, target?*
-    _bound offset, $03, UNSIGNED
-    _match_register target
-    _ensure r08
-    db 11001011b, ((01b shl $06) or (offset shl $03) or (_metadata - register))
-end macro
-
-macro res?  offset?*, target?*
-    _bound offset, $03, UNSIGNED
-    _match_register target
-    _ensure r08
-    db 11001011b, ((10b shl $06) or (offset shl $03) or (_metadata - register))
-end macro
-
-macro set?  offset?*, target?*
-    _bound offset, $03, UNSIGNED
-    _match_register target
-    _ensure r08
-    db 11001011b, ((11b shl $06) or (offset shl $03) or (_metadata - register))
-end macro
-
-_mem_reg    := 0b
-_reg_mem    := 1b
-
-macro   _build_ld?  argument?*
-    local _operation
-    match =I?, argument
-        _operation = _inc
-    else match =D?, argument
-        _operation = _dec
-    else
-        err ""
-    end match
-    macro ld#argument#?  destination?*, source?*
-        local _direction, _current, _count
-        _count = 0
-        iterate _item, <destination>, <source>
-            _match_register _item
-            if (_metadata eq (A metadata 1))
-                _current = _reg_mem
-            else if (_metadata eq (_MHL metadata 1))
-                _current = _mem_reg
-            else
-                err ""
-            end if
-            if (~(_count))
-                _direction = _current
-            end if
-            _count = _count + 1
-        end iterate
-        db ((1b shl $05) or (_operation shl $04) or (_direction shl $03) or (010b))
-    end macro
-end macro
-
-iterate _ld, I, D
-    _build_ld   _ld
-end iterate
-
-macro ld?   destination?*, source?*
-    local _memory, _direction, _count, _address, _offset
-    _count = 0
-    iterate _item, <destination>, <source>
-        _inline_if  _count = 0,           \
-                    _direction = _mem_reg,\
-                    _direction = _reg_mem
-        _memory     equ
-        _is_memory  _memory, _item
-        match _, _memory
-            match =HL? +, _
-                _inline_if  _count = 0,            \
-                            <ldi [HL], source>,    \
-                            <ldi destination, [HL]>
-            else match =HL? -, _
-                _inline_if  _count = 0,            \
-                            <ldd [HL], source>,    \
-                            <ldd destination, [HL]>
-            else match value, _
-                _address = 0
-                _offset = 0
-                match address + offset, value
-                    _address    = address
-                    _offset     = + offset
-                else match address - offset, value
-                    _address    = address
-                    _offset     = - offset
-                end match
-
-                if ((_address eq $FF00) | (value eq $FF00))
-                    _inline_if  _count = 0,            \
-                                _match_register source,\
-                                _match_register destination
-
-                    if (~(_metadata eq (A metadata 1)))
-                        err ""
-                    end if
-                    _bound _offset,  $08
-                    db ((111b shl $05) or (_direction shl $04)), _offset
-                else
-                    if ((elementsof (value)) = 0)
-                        _inline_if  _count = 0,                \
-                                    _match_register source,    \
-                                    _match_register destination
-
-                        _bound value, $10
-                        if (_metadata eq (A metadata 1))
-                            db ((111b shl $05) or (_direction shl $04) or (1010b))
-                            dw value
-                        end if
-                    else match =C?, value
-                        db ((111b shl $05) or (_direction shl $04) or (0010b))
-                    end match
+macro _escape_string? result?*, str?*
+    local _escape, _result, _char
+    _result = ""
+    _escape = 0
+    _iterate_string char, str
+        _char = char
+        if (_escape)
+            local _found
+            _found = 0
+            iterate <target, value>,  "n",$0A, "t",$09, "r",$0D, "\","\",\
+                                      "{","{", "}","}", '"','"', "'","'"
+                if (char = target)
+                    _char = string value
+                    _found = 1
+                    break
                 end if
-            end match
-            break
-        end match
-        _count = _count + 1
-    end iterate
-    if (_count = 2)
-        err ""
-    end if
-end macro
-
-macro ld?   destination?*, source?*
-    local _memory
-    _memory     equ
-    _is_memory  _memory, destination
-    match , _memory
-        _is_memory  _memory, source
-    end match
-
-    match _, _memory
-        match =SP?, source
-            _bound _, $10
-            db 00001000b
-            dw _
-        else
-            ld destination, source
-        end match
-    else match =SP?, destination
-        match =HL?, source
-            db 11111001b
-        else
-            err ""
-        end match
-    else match =HL?, destination
-        local _offset
-        _offset = 0
-        match =SP? + number, source
-            _offset = + number
-        else match =SP? - number, source
-            _offset = - number
-        else match =SP?, source
-        else
-            err "" 
-        end match
-        _bound _offset, $08
-        db 11111000b
-        db _offset
-    else
-        _match_register destination
-        if (_metadata relativeto register)
-            local _dest_reg
-            _dest_reg = _metadata - register
-            if ((elementsof (source)) = 0)
-                _bound source, $08
-                db ((_dest_reg shl $03) or (110b))
-                db source
-            else
-                _match_register source
-                _ensure r08
-                db ((01b shl $06) or (_dest_reg shl $03) or (_metadata - register))
-            end if
-        else
-            _bound source, $10
-            _scale $02
-            db (((_metadata scale $02) shl $04) or (0001b))
-            dw source
+            end iterate
+            _inline_if (~(_found)), <err "Illegal character escape '", char, "'">
+            _escape = 0
+        else if (char = "\")
+            _escape = 1
         end if
-    end match
+        _inline_if (~(_escape)), <_append_string _result, _char>
+    _end_iterate_string
+    result = _result
 end macro
 
-;macro ld?   destination?*, source?*
-;    local _memory, _address, _offset
-;    _memory     equ
-;    _is_memory  _memory, destination
-;    match _, _memory
-;        match =HL? +, _
-;            ldi [HL], source
-;        else match =HL? -, _
-;            ldd [HL], source
-;        else match value, _
-;            _address = 0
-;            _offset = 0
-;            match address + offset, value
-;                _address = address
-;                _offset = + offset
-;            else match address - offset, value
-;                _address = address
-;                _offset = - offset
-;            end match
-;            if (_address eq $FF00)
-;                _match_register source
-;                if (~(_metadata eq (A metadata 1)))
-;                    err ""
-;                end if
-;                _bound _offset,  $08
-;                db 11100000b, _offset
-;            else
-;                if (((value) eqtype $00) & ((elementsof (value)) = 0))
-;                    _match_register source
-;                    _bound value, $10
-;                    if (_metadata eq (SP metadata 1))
-;                        db 00001000b
-;                    else if (_metada eq (A metadata 1))
-;                        db 11101010
-;                    else
-;                       err ""
-;                   end if
-;                    dw value
-;                else
-;                    _match_register value
-;                    if (~(_metadata relativeto register))
-;                        _scale $01
-;                        db (((_metadata scale $01) shl $04) or (010b))
-;                    end if
-;                end if
-;            end if
-;        end match
-;    end match
-;end macro
+macro _preprocess_string? result?*, str?*
+    _expand_string result, str
+    _escape_string result, result
+end macro
 
-macro _signed? number?*
-    if (number < $00)
-        err "Constant mustn't be negative: ", (`number)
+macro printt? string?*
+    local _result
+    _preprocess_string _result, string
+    display _result
+end macro
+
+macro printv? number?*
+    _bound number, $10, UNSIGNED
+    local _result, _number
+    _is_integer number
+    _result = 0
+    _number = trunc number
+    while (_number)
+        _result = (_result shl $10) or (_number mod $10)
+        _inline_if ((_result and $0F) >= $0A), _result = (_result - $0A) + "A",\
+                                               _result = _result + "0"
+        _number = _number / $10
+    end while
+    display "$", string _result
+end macro
+
+macro printi? number
+    _bound number, $10, SIGNED
+    local _result, _number
+    _is_integer number
+    _result = 0
+    _number = trunc number
+    if (_number < $00)
+        display "-"
+        _number = _number * (-1)
     end if
+    while (_number)
+        _result = (_result shl $08) + ((_number mod 10) + "0")
+        _number = _number / 10
+    end while
+    display string _result
+end macro
+
+macro warn? string?*
+    _interpret_string _warn_string, string
+    printt "warning: {__file__}("
+    printi  __line__
+    printt "):\n\t{_warn_string}"
+end macro
+
+macro fail? string?*
+    _preprocess_string _error_string, string
+    printt "ERROR: {__file__}("
+    printi  __line__
+    printt "):\n\t{_error_string}"
+    err     _error_string
+end macro
+
+_random_label   = 0
+_random_count   = 0
+_random_use     = 0
+
+macro _reset_random_use?
+    _inline_if (_random_use), _random_count = _random_count + 1
+    _random_use = 0
+end macro
+
+macro _reset?
+    purge   ?
+    restruc ?
+end macro
+
+macro _restart
+    _reset
+    _search_label
+end macro
+
+macro _interpret_line?
+    macro ?! params&
+        local _result
+        _expand_string _result, `params
+        eval    _result
+    end macro
 end macro
 
 macro rept? count?*
+    _reset
     _signed count
+    _start_rept     =: 1
+    _random_label   =: 1
+    _reset_random_use
+    _interpret_line
     repeat count
 end macro
 
 macro endr?!
+        _reset_random_use
     end repeat
+    _restart
+    restore _start_rept, _random_label
 end macro
 
 macro incbin? arguments?*&
@@ -639,79 +229,55 @@ macro incbin? arguments?*&
     end match
 end macro
 
-macro union?
-    _unionStart =: $
-end macro
+;macro union?
+;    _unionStart =: $
+;end macro
 
-macro nextu?!
-    if (~(defined _unionStart))
-        err "Found NEXTU outside of a UNION construct"
-    end if
-    org _unionStart
-end macro
+;macro nextu?!
+;    if (~(defined _unionStart))
+;        err "Found NEXTU outside of a UNION construct"
+;    end if
+;    org _unionStart
+;end macro
 
-macro endu?!
-    if (~(defined _unionStart))
-        err "Found ENDU outside of a UNION construct"
-    end if
-    restore _unionStart
-end macro
+;macro endu?!
+;    if (~(defined _unionStart))
+;        err "Found ENDU outside of a UNION construct"
+;    end if
+;    restore _unionStart
+;end macro
 
-postpone
-    __restruc
-    if (defined _unionStart)
-        _level = 0
-        while (defined _unionStart)
-            restore _unionStart
-            _level = _level + 1
-        end while
-        err "Unterminated UNION construct (", _level + "0", " levels)!"
-    end if
+_count_macro    = 0
 
-    _magic  := "RGB6"
-    purge db?, dw?, dl?
-
-    db _magic
-    dd _count_symbols
-    dd _count_section
-    
-    repeat _count_symbols, i:1
-        if (_label_local_#i)
-            db _label_last_#i
-            db "."
-        end if
-        db _label_#i
-        db 0
-        db _label_scope_#i
-        if (_label_scope_#i <> _IMPORT)
-            db __file__
-            db 0
-            dd _label_line_#i
-            dd _label_section_id_#i
-            dd _label_offset_#i
-        end if
+macro _define_macro? name?*
+    _reset
+    _count_macro = _count_macro + 1
+    esc macro name line?&
+    _reset_random_use
+    local _new_line, _last_index
+    _new_line   equ line
+    repeat 9, i:1
+        match _ =, _rest, _new_line
+            _new_line   equ _rest
+            _expand_string _a#i, `_
+        else match _, _new_line
+            _new_line   equ
+            _expand_string _a#i, `_
+            _last_index = i
+        else
+            _a#i        equ
+        end match
     end repeat
+    _start_macro    =:  1
+    _random_label   =:  1
+    _interpret_line
+end macro
 
-    repeat _count_section, i:1
-        db _section_#i
-        db 0
-        virtual _area_#i
-            _length_#i = $ - $$
-        end virtual
-        dd _length_#i
-        db _section_type_#i
-        dd _section_org_#i
-        dd _section_bank_#i
-        dd _section_align_#i
-        if ((_section_type_#i eq ROM0) | (_section_type_#i eq ROMX))
-            repeat _length_#i
-                load _byte:byte from _area_#i:%-1
-                db _byte
-            end repeat
-            dd 0
-        end if
-    end repeat
-end postpone
+macro endm?!
+    _restart
+    esc end macro
+    restore _start_macro, _random_label
+end macro
 
 ROM0    := 3
 ROMX    := 2 
@@ -723,10 +289,8 @@ OAM     := 7
 HRAM    := 4
 
 macro section?  name?*, type?*, options?&
-    __restruc
-    if (~(name eqtype ""))
-        err ""
-    end if
+    _reset
+    _is_string name, "Name section must be a string"
 
     local _valid, _found, _type, _org, _bank, _align
     _found  =  0
@@ -739,46 +303,52 @@ macro section?  name?*, type?*, options?&
         _type   equ kind
     end match
 
-    _valid = 0
     _find_item  _valid, _type, ROM0,  ROMX,\
                                VRAM,  SRAM,\
                               WRAM0, WRAMX,\
                                        OAM,\
                                       HRAM
-    if (~(_valid))
-        err ""
-    end if
 
+    _inline_if  (~(_valid)), err "Section type unknown"
     _bank   = -1
     _align  = -1
+
     match option_1 =, option_2, options
         match =BANK? [ _1 ] =, =ALIGN? [ _2 ], options
             _bank   = _1
             _align  = _2
-        else match =ALIGN? [ _1 ] =, =BANK? [ _2], options
+        else match =ALIGN? [ _1 ] =, =BANK? [ _2 ], options
             _align  = _1
             _bank   = _2
         else
-            err ""
+            err "Syntax error"
         end match
+        _signed _bank
+        _signed _align
     else match option, options
         match =BANK? [ _ ], option
+            _signed _
             _bank   = _
         else match =ALIGN? [ _ ], option
+            _signed _
             _align  = _
         else
-            err ""
+            err "Syntax error"
         end match
     end match
 
     if (_align <> -1)
         if (_org <> -1)
-            err ""
+            err "Align can't be specified with addr"
         else if ((_align < 0) | (_align > 16))
-            err ""
+            err "Align must fit between 0-16"
         end if
-    else if ((_bank <> -1) & ((_bank <= 0) | (_bank > $1FF)))
-        err     ""
+    else if (_bank <> -1)
+        if ((_bank <= $000) | (_bank > $1FF)))
+            err "Bank number must fit between $000-$1FF"
+        else if ((_type <> ROMX) & (_type <> VRAM) & (_type <> SRAM) & (_type <> WRAMX))
+            err "BANK only allowed for ROMX, WRAMX, SRAM, or VRAM sections"
+        end if
     end if
 
     repeat _count_section, i:1
@@ -795,37 +365,44 @@ macro section?  name?*, type?*, options?&
             _section_type_#i    = _type
             _section_org_#i     = _org
             _section_bank_#i    = _bank
-            _section_align_#i   = _align
+            _inline_if          (_align = -1), _align = 0
+            _section_align_#i   = 1 shl _align
+            _count_patches_#i   = 0
             virtual at $00
                 _area_#i::
             end virtual
             _db EQU i
         end repeat
-        if (_org = -1)
-            _org = 0
-        end if
+        _inline_if              (_org = -1), _org = 0
         section _org
+    else
+        err "TODO"
     end if
     _search_label
 end macro
 
-_count_symbols = 0
-_count_section = 0
-
-macro _define   kind?*, def?*, res?*
+macro _define   kind?*, def?*, res?*, kpatch?*
     macro kind? line?&
         if (_count_section = 0)
             err "Code generation before SECTION directive"
         else
-            repeat 1, i:_count_section
+            repeat 1, i:_db
                 match _, line
                     if ((_section_type_#i <> ROM0) & (_section_type_#i <> ROMX))
                         err "Section '", _section_#i,\
                             "' cannot contain code or data (not ROM0 or ROMX)"
+                    else
+                        virtual _area_#i
+                            local _current, _value
+                            _current = ($ - $$)
+                            _value = line
+                            if ((elementsof (line)) <> 0)
+                                _rpn_expression _current, kpatch, line
+                                _value = 0
+                            end if
+                            def _value
+                        end virtual
                     end if
-                    virtual _area_#i
-                        def line
-                    end virtual
                 else
                     virtual _area_#i
                         res 1
@@ -836,9 +413,9 @@ macro _define   kind?*, def?*, res?*
     end macro
 end macro
 
-_define db, db, rb
-_define dw, dw, rw
-_define dl, dd, rd
+_define db, db, rb, _BYTE
+_define dw, dw, rw, _WORD
+_define dl, dd, rd, _LONG
 
 macro ds? count?*
     _signed count
@@ -852,47 +429,90 @@ _IMPORT := 1
 _EXPORT := 2
 
 _last_label = ""
+_in_virtual = 0
+
+macro virtual? line*&
+    _in_virtual = 1
+    virtual line
+end macro
+
+macro end?.virtual?!
+    end virtual
+    _in_virtual = 0
+end macro
 
 macro _search_label?
     struc (name?) ?! line&
-        if (~(`name eq "__restruc"))
-            label name at $
-            local _local, _local_name
-
-            _local = 0
-            _local_name = `name
-            match . _NAME?, name
-                _local = 1
-                _local_name = `_NAME
-            else
-                _last_label = `name
-            end match
-
-            if (used name)
-                if (~(_count_section))
-                    err "getsecid: Unknown section"
-                end if
-                _count_symbols = _count_symbols + 1
-                repeat 1, i:_count_symbols
-                    _label_#i               = _local_name
-                    _label_local_#i         = _local
-                    if (_local)
-                        _label_last_#i      = _last_label
-                    end if
-                    _label_scope_#i         = _LOCAL
-                    _label_line_#i          = __line__
-                    _label_section_id_#i    = (_count_section - 1)
-                    _label_offset_#i        = $
-                end repeat
-            end if
+        local _is_macro
+        _is_macro = 0
+        match : =MACRO?, line
+            _is_macro = 1
         else
-            restruc ?
-        end if
+            local _is_label, _new_line, _type
+            _is_label = 0
+            _new_line   equ
+
+            iterate i, ::, :
+                _type = _LOCAL
+                match i _, line
+                    _is_label = 1
+                    _new_line   equ _
+                else match i, line
+                    _is_label = 1
+                end match
+                if (_is_label)
+                    _inline_if  (~(_in_virtual))             ,\
+                                element name : _count_symbols,\
+                                _is_label = 0
+                    if (`i = "::")
+                        _type = _EXPORT
+                    end if
+                    break
+                end if
+            end iterate
+            if (_is_label)
+                local _local, _local_name
+                _local = 0
+                _local_name = `name
+                match . _NAME?, name
+                    _local = 1
+                    _local_name = `_NAME
+                else
+                    _last_label = `name
+                end match
+                if (used name)
+                    if (~(_count_section))
+                        err "getsecid: Unknown section"
+                    end if
+                    _count_symbols = _count_symbols + 1
+                    repeat 1, i:_count_symbols
+                        _label_#i               = _local_name
+                        _label_local_#i         = _local
+                        if (_local)
+                            _label_last_#i      = _last_label
+                        end if
+                        _label_scope_#i         = _type
+                        _label_line_#i          = __line__
+                        _label_section_id_#i    = (_db - 1)
+                        repeat 1, j:_db
+                            virtual _area_#j
+                                _label_offset_#i        = ($ - $$)
+                            end virtual
+                        end repeat
+                    end repeat
+                end if
+                match _, _new_line
+                    _
+                end match
+            else
+                name line
+            end if
+        end match
+        _inline_if (_is_macro), _define_macro name
     end struc
 end macro
 
-_search_label
+include "postpone.asm"
 
-SECTION "", ROM0
-abc:
-db abc
+_restart
+
