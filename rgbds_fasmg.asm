@@ -186,38 +186,87 @@ macro _reset_random_use?
     _random_use = 0
 end macro
 
-macro _reset?
-    purge   ?
+macro _interpret_off
     restruc ?
-end macro
-
-macro _restart
-    _reset
-    _search_label
-end macro
-
-macro _interpret_line?
-    macro ?! params&
-        local _result
-        _expand_string _result, `params
-        eval    _result
+    purge ?
+    macro end?.macro?!
+        esc end macro
+        purge end?.macro?
+        _interpret_line
     end macro
 end macro
 
+macro _interpret_line?:
+    macro ?! params&
+        display "PARAMS = ", `params, $A
+        local _new_params
+        _new_params equ params
+        if ((_start_macro) | (_start_rept))
+            local _result
+            _expand_string _result, `params
+            eval    "_new_params equ ", _result
+        end if
+
+        local _change
+        _change = 1
+
+        _symbol equ  <<, shl
+        _symbol equ  >>, shr
+        _symbol equ >==,  ge
+        _symbol equ <==,  le
+        _symbol equ   >,  gt
+        _symbol equ   <,  lt
+
+        irpv _value, _symbol
+            while (_change)
+                _change = 1
+                match _item =, _replace, _value
+                    match _1 _item _2, _new_params
+                        _new_params equ _1 _replace _2
+                    else match _ _item, _new_params
+                        _new_params equ _ _replace
+                    else match _item _, _new_params
+                        _new_params equ _replace _
+                    else match _item, _new_params
+                        _new_params equ _replace
+                    else
+                        _change = 0
+                    end match
+                end match
+            end while
+        end irpv
+
+        ;match  _ . 
+
+        macro invoker?
+        end macro
+        match _, _new_params
+            macro invoker?  
+                esc _
+            end macro
+            _search_label
+            match =MACRO? _line, _
+                _interpret_off
+            end match
+        end match
+        invoker
+        restruc ?
+        purge invoker?
+    end macro
+end macro
+
+_start_rept =: 0
 macro rept? count?*
-    _reset
     _signed count
     _start_rept     =: 1
     _random_label   =: 1
     _reset_random_use
-    _interpret_line
     repeat count
 end macro
 
 macro endr?!
         _reset_random_use
     end repeat
-    _restart
     restore _start_rept, _random_label
 end macro
 
@@ -247,14 +296,16 @@ end macro
 ;    restore _unionStart
 ;end macro
 
-_count_macro    = 0
+_count_macro    =  0
+_start_macro    =: 0
 
 macro _define_macro? name?*
-    _reset
     _count_macro = _count_macro + 1
     esc macro name line?&
+    restruc ?
+    purge   ?
     _reset_random_use
-    local _new_line, _last_index
+    local _new_line
     _new_line   equ line
     repeat 9, i:1
         match _ =, _rest, _new_line
@@ -263,7 +314,7 @@ macro _define_macro? name?*
         else match _, _new_line
             _new_line   equ
             _expand_string _a#i, `_
-            _last_index = i
+            _NARG       =: i
         else
             _a#i        equ
         end match
@@ -273,10 +324,17 @@ macro _define_macro? name?*
     _interpret_line
 end macro
 
+;macro shift?
+;    _inline_if (~(defined _start_macro)), err "SHIFT instruction must be in MACRO"
+;    repeat 8, i:1, j:2
+;        _a#i    equ _a#j
+;    end repeat
+;end macro
+
 macro endm?!
-    _restart
+    purge ?
+    restore _start_macro, _random_label, _NARG
     esc end macro
-    restore _start_macro, _random_label
 end macro
 
 ROM0    := 3
@@ -394,13 +452,15 @@ macro _define   kind?*, def?*, res?*, kpatch?*
                     else
                         virtual _area_#i
                             local _current, _value
-                            _current = ($ - $$)
-                            _value = line
-                            if ((elementsof (line)) <> 0)
-                                _rpn_expression _current, kpatch, line
-                                _value = 0
-                            end if
-                            def _value
+                            iterate item, line
+                                _current = ($ - $$)
+                                _value = item
+                                if ((elementsof (item)) <> 0)
+                                    _rpn_expression _current, kpatch, item
+                                    _value = 0
+                                end if
+                                def _value
+                            end iterate
                         end virtual
                     end if
                 else
@@ -441,19 +501,37 @@ macro end?.virtual?!
     _in_virtual = 0
 end macro
 
+macro _prefix_label? result?*, name?*
+    local _name
+    _name = `name
+    match . _NAME?, name
+        _inline_if (_last_label = ""), err "Local label must not be alone"
+        _name = _last_label
+        _append_string _name, `name
+    else
+        _last_label = `name
+    end match
+    result = _name
+end macro
+
 macro _search_label?
     struc (name?) ?! line&
-        local _is_macro
-        _is_macro = 0
+        display "NAME = ", `name, $A
+        display "LINE = ", `line, $A
+        macro invoker?
+        end macro
         match : =MACRO?, line
-            _is_macro = 1
+            macro invoker?
+                _interpret_off
+                _define_macro name
+            end macro
         else
             local _is_label, _new_line, _type
             _is_label = 0
             _new_line   equ
 
+            _type = _LOCAL
             iterate i, ::, :
-                _type = _LOCAL
                 match i _, line
                     _is_label = 1
                     _new_line   equ _
@@ -461,36 +539,23 @@ macro _search_label?
                     _is_label = 1
                 end match
                 if (_is_label)
-                    _inline_if  (~(_in_virtual))             ,\
-                                element name : _count_symbols,\
-                                _is_label = 0
-                    if (`i = "::")
-                        _type = _EXPORT
-                    end if
+                    _inline_if  (_in_virtual), _is_label = 0,\
+                                <_inline_if  (`i = "::"), _type = _EXPORT>
                     break
                 end if
             end iterate
             if (_is_label)
-                local _local, _local_name
-                _local = 0
-                _local_name = `name
-                match . _NAME?, name
-                    _local = 1
-                    _local_name = `_NAME
-                else
-                    _last_label = `name
+                local _name, _name_equ
+                _prefix_label _name, name
+                eval    "_name_equ equ ", _name
+                match _, _name_equ
+                    element _ : _count_symbols
                 end match
-                if (used name)
-                    if (~(_count_section))
-                        err "getsecid: Unknown section"
-                    end if
+                if (used _name_equ)
+                    _inline_if (~(_count_section)), err "getsecid: Unknown section"
                     _count_symbols = _count_symbols + 1
                     repeat 1, i:_count_symbols
-                        _label_#i               = _local_name
-                        _label_local_#i         = _local
-                        if (_local)
-                            _label_last_#i      = _last_label
-                        end if
+                        _label_#i               = _name
                         _label_scope_#i         = _type
                         _label_line_#i          = __line__
                         _label_section_id_#i    = (_db - 1)
@@ -502,17 +567,20 @@ macro _search_label?
                     end repeat
                 end if
                 match _, _new_line
-                    _
+                    macro invoker?
+                        esc _
+                    end macro
                 end match
             else
-                name line
+                macro invoker?
+                    esc name line
+                end macro
             end if
         end match
-        _inline_if (_is_macro), _define_macro name
+        invoker
+        purge invoker?
     end struc
 end macro
 
 include "postpone.asm"
-
-_restart
 

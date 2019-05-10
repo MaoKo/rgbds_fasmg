@@ -62,17 +62,13 @@ end macro
 macro   _match_register?        argument?*
     local   _valid
     _is_register    _valid, argument
-    if (~(_valid))
-        err     "Register not matched"
-    end if
+    _inline_if      (~(_valid)), err "Register not matched"
 end macro
 
 macro   _not_match_register?    argument?*
     local   _valid
     _is_register    _valid, argument
-    if (_valid)
-        err     "Register matched"
-    end if
+    _inline_if      (_valid), err "Register matched"
 end macro
 
 macro _match_condition? argument?*

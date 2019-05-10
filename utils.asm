@@ -101,19 +101,19 @@ end macro
 macro _inline_if?: condition?*, true?*, false?
     local _defined
     if (condition)
-        macro invoker
+        macro invoker?
             true
         end macro
     else match _, false
-        macro invoker
+        macro invoker?
             false
         end macro
     else
-        macro invoker
+        macro invoker?
         end macro
     end match
     invoker
-    purge invoker
+    purge invoker?
 end macro
 
 _count_symbols  = 0

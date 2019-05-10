@@ -1,5 +1,5 @@
-postpone    
-    _reset
+postpone
+    purge ?
 ;    if (defined _unionStart)
 ;        _level = 0
 ;        while (defined _unionStart)
@@ -17,10 +17,6 @@ postpone
     dd _count_section
     
     repeat _count_symbols, i:1
-        if (_label_local_#i)
-            db _label_last_#i
-            db "."
-        end if
         db _label_#i
         db 0
         db _label_scope_#i
