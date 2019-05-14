@@ -22,11 +22,14 @@ element SP?     : (coef1 * -1b) + (coef2 *  11b) + (coef3 * -01b)
 element AF?     : (coef1 * -1b) + (coef2 * -01b) + (coef3 *  11b)
 
 element CC?
+define  condition
 
-NZ? := CC + 00b
-Z?  := CC + 01b
-NC? := CC + 10b
-;element  C?     := CC + 11b
+namespace condition
+    NZ? := CC + 00b
+    Z?  := CC + 01b
+    NC? := CC + 10b
+    C?  := CC + 11b
+end namespace
 
 macro _is_memory? symbolic?*, argument?*&
     symbolic        equ
@@ -39,22 +42,19 @@ end macro
 
 macro _is_register? result?*, argument?*
     local   _memory
+    result = 0
     _is_memory  _memory, argument
     match   _, _memory
         match   =HL?, _
-            _metadata   = _MEM metadata 1
+            _metadata   = (_MEM metadata 1)
             result      = 1
         end match
     else
         _value = argument
         if (_value eq _value element 1)
             _find_item  result, <argument>, B,C,D,E,H,L,A
-            if (~(result))
-                _find_item  result, <argument>, BC,DE,HL,SP,AF
-            end if
-            if (result)
-                _metadata = _value metadata 1
-            end if
+            _inline_if (~(result)), <_find_item  result, <argument>, BC,DE,HL,SP,AF>
+            _inline_if (result),    _metadata = (_value metadata 1)
         end if
     end match
 end macro
@@ -74,26 +74,19 @@ end macro
 macro _match_condition? argument?*
     local   _valid
     _find_item _valid, argument, NZ,Z,NC,C
-    if (~(_valid))
-        err ""
-    end if
+    _inline_if (~(_valid)), err "Not a valid condition found"
 end macro
 
 macro _scale? number?*
-    if ((_metadata scale number) = -01b)
-        err ""
-    end if
+    _is_integer number
+    _inline_if ((_metadata scale number) = -01b), err "Scale not supported by this index"
 end macro
 
 macro _ensure?  kind?*
     match =R08?, kind
-        if (~(_metadata relativeto register))
-            err     "Register of 8-bit is required"
-        end if
+        _inline_if (~(_metadata relativeto register)),  err "Register of 8-bit is required"
     else match =R16?, kind
-        if (_metadata relativeto register)
-            err     "Register of 16-bit is required"
-        end if
+        _inline_if (_metadata relativeto register),     err "Register of 16-bit is required"
     end match
 end macro
 
@@ -127,10 +120,10 @@ end macro
 macro   jr? arguments?*&
     local   _destination
     _destination    equ
-    match   condition =, target, arguments
-        _match_condition    condition
+    match   cond =, target, arguments
+        _match_condition    cond
         _destination    equ target
-        db  ((001b shl $05) or ((condition - CC) shl $03))
+        db  ((001b shl $05) or ((condition.cond - CC) shl $03))
     else
         _destination    equ arguments
         db  00011000b
@@ -244,17 +237,17 @@ iterate _operation, pop, push
 end iterate
 
 macro   rst?    argument?*
-    if (argument mod $08)
-        err ""
-    end if
+    _is_integer argument
+    _inline_if ((elementsof (argument)) <> 0), err "Address for RST must be absolute"
+    _inline_if (argument mod $08), <err "Invalid address ", `argument, " for RST">
     _bound  (argument shr $03), $03, UNSIGNED
     db ((11b shl $06) or (argument) or (111b))
 end macro
 
-macro   ret?    condition?& 
-    match _condition, condition
+macro   ret?    cond?& 
+    match _condition, cond
         _match_condition _condition
-        db ((110b shl $05) or ((_condition - CC) shl $03))
+        db ((110b shl $05) or ((condition._condition - CC) shl $03))
     else
         db 11001001b
     end match
@@ -269,30 +262,30 @@ macro   jp? arguments?*&
         db 11101001b
     else
         local _destination
-        match condition =, target, arguments
-            _match_condition condition
-            _destination = target
-            db ((110b shl $05) or ((condition - CC) shl $03) or (010b))
+        match cond =, target, arguments
+            _match_condition cond
+            _destination equ target
+            db ((110b shl $05) or ((condition.cond - CC) shl $03) or (010b))
         else
-            _destination = arguments
+            _destination equ arguments
             db 11000011b
         end match
-        _bound _destination, $10
+        _inline_if ((elementsof (_destination)) = 0), <_bound _destination, $10>
         dw _destination
     end match
 end macro
 
 macro   call?   argument?*&
     local _destination
-    match condition =, target, argument
-        _match_condition condition
-        _destination = target
-        db ((110b shl $05) or ((condition - CC) shl $03) or (110b))
+    match cond =, target, argument
+        _match_condition cond
+        _destination equ target
+        db ((110b shl $05) or ((condition.cond - CC) shl $03) or (110b))
     else
-        _destination = argument
+        _destination equ argument
         db 11001101b
     end match
-    _bound _destination, $10
+    _inline_if ((elementsof (_destination)) = 0), <_bound _destination, $10>
     dw _destination
 end macro
 
@@ -313,8 +306,6 @@ macro   _build_direction?   type?*
         _direction = _left
     else match =R?, type
         _direction = _right
-    else
-        err ""
     end match
     macro r#type#ca?
         db ((_direction shl $03) or (111b))
@@ -385,8 +376,6 @@ macro   _build_ld?  argument?*
         _operation = _inc
     else match =D?, argument
         _operation = _dec
-    else
-        err ""
     end match
     macro ld#argument#?  destination?*, source?*
         local _direction, _current, _count
@@ -417,18 +406,18 @@ macro ld?   destination?*, source?*
     local _memory, _direction, _count, _address, _offset
     _count = 0
     iterate _item, <destination>, <source>
-        _inline_if  _count = 0,           \
+        _inline_if  (_count = 0),         \
                     _direction = _mem_reg,\
                     _direction = _reg_mem
         _memory     equ
         _is_memory  _memory, _item
         match _, _memory
             match =HL? +, _
-                _inline_if  _count = 0,            \
+                _inline_if  (_count = 0),          \
                             <ldi [HL], source>,    \
                             <ldi destination, [HL]>
             else match =HL? -, _
-                _inline_if  _count = 0,            \
+                _inline_if  (_count = 0),          \
                             <ldd [HL], source>,    \
                             <ldd destination, [HL]>
             else match value, _
@@ -442,30 +431,28 @@ macro ld?   destination?*, source?*
                     _offset     = - offset
                 end match
 
-                if ((_address eq $FF00) | (value eq $FF00))
-                    _inline_if  _count = 0,            \
-                                _match_register source,\
-                                _match_register destination
+                _inline_if  (_count = 0),          \
+                            _match_register source,\
+                            _match_register destination
 
-                    if (~(_metadata eq (A metadata 1)))
-                        err ""
-                    end if
+                if (~(_metadata eq (A metadata 1)))
+                    err "A register must be an operand"
+                end if
+
+                if ((_address eq $FF00) | (value eq $FF00))
                     _bound _offset,  $08
                     db ((111b shl $05) or (_direction shl $04)), _offset
+                else match =C?, value
+                    db ((111b shl $05) or (_direction shl $04) or (0010b))
+                else if ((elementsof (value)) = 0)
+                    _bound value, $10
+                    db ((111b shl $05) or (_direction shl $04) or (1010b))
+                    dw value
                 else
-                    if ((elementsof (value)) = 0)
-                        _inline_if  _count = 0,                \
-                                    _match_register source,    \
-                                    _match_register destination
-
-                        _bound value, $10
-                        if (_metadata eq (A metadata 1))
-                            db ((111b shl $05) or (_direction shl $04) or (1010b))
-                            dw value
-                        end if
-                    else match =C?, value
-                        db ((111b shl $05) or (_direction shl $04) or (0010b))
-                    end match
+                    _match_register value
+                    _ensure r16
+                    _scale $01
+                    db (((_metadata scale $01) shl $04) or (_direction shl $03) or (010b))
                 end if
             end match
             break
@@ -479,10 +466,13 @@ end macro
 
 macro ld?   destination?*, source?*
     local _memory
-    _memory     equ
     _is_memory  _memory, destination
     match , _memory
         _is_memory  _memory, source
+    end match
+
+    match =HL?, _memory
+        _memory equ
     end match
 
     match _, _memory

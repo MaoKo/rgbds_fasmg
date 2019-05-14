@@ -78,20 +78,20 @@ macro _rpn_parser?:     offset?*, expression?*
     end iterate
 
     match ( sub? ), expression
-        _rpn_parser sub
+        _rpn_parser offset, sub
     else match ~ term, expression
-        _rpn_parser term
+        _rpn_parser offset, term
         db _UNNEG
     else match - term, expression
-        _rpn_parser term
+        _rpn_parser offset, term
         db _UNNOT
     else match + term, expression
-        _rpn_parser term
+        _rpn_parser offset, term
     else match _, _operator
         match term_1 =_ term_2, expression
             _check_div = 0
-            _rpn_parser term_1
-            _rpn_parser term_2
+            _rpn_parser offset, term_1
+            _rpn_parser offset, term_2
             match =/, _
                 _check_div = 1
             else match =%, _
@@ -103,7 +103,7 @@ macro _rpn_parser?:     offset?*, expression?*
             db  _value
         end match
     else match ! term, epxression
-        _rpn_parser term
+        _rpn_parser offset, term
         db _LOGNOT
     else match term, expression
         if (elementsof (term))

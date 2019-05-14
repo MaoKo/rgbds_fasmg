@@ -1,18 +1,10 @@
 include "z80.asm"
 format binary as 'o'
 
-macro _append_string? result?*, str?*
-    local _result, _length, _char, _double
-    _result = result
-    _iterate_string char, str
-        _length = lengthof  (_result)
-        _result = string    (_result or (char shl (_length * $08)))
-    _end_iterate_string
-    result = _result
-end macro
-
 macro _insert_string? result?*, str?*
     local _result, _char, _double
+    define  result
+    restore result
     _result = result
     _double = 0
     _iterate_string char, str
@@ -33,6 +25,7 @@ end macro
 
 macro _eval_string? result?*, expand?*
     local _expand
+    _is_string  expand
     eval "_expand = ", expand
     _is_string _expand
     _insert_string result, _expand
@@ -60,7 +53,6 @@ end macro
 
 macro _expand_macro_param? result?*, str?*
     local _result, _escape, _not_defined, _char
-    _not_defined = 0
     _escape = 0
     _result = ""
     _iterate_string char, str
@@ -68,9 +60,16 @@ macro _expand_macro_param? result?*, str?*
         if (_escape)
             _char = ""
             if ((char >= "1") & (char <= "9"))
-                repeat 1, i:char - "0"
-                    _insert_string _result, _a#i
-                end repeat
+                _not_defined = 0
+                match _name, _macro_name
+                    repeat 1, i:char - "0"
+                        _inline_if (_#_name#_#i = ""), _not_defined = 1
+                        _insert_string _result, _#_name#_#i
+                    end repeat
+                else
+                    _not_defined = 1
+                end match
+                _inline_if (_not_defined), err "MACRO argument not defined"
             else if (char = "@")
                 _inline_if (~(_random_label)), err "Only available in MACRO/REPT block"
                 _append_string _result, "_"
@@ -188,7 +187,7 @@ end macro
 
 macro _interpret_off
     restruc ?
-    purge ?
+    purge   ?
     macro end?.macro?!
         esc end macro
         purge end?.macro?
@@ -196,16 +195,14 @@ macro _interpret_off
     end macro
 end macro
 
-; TODO ADD . TO REFER TO THE MOST GLOBAL LABEL
-macro _expand_local_label?: _result?*, _input?*, _follow?:0
-    _result equ
-    local _after, _before, _target, _continue, _r1, _r2
+macro _expand_local_label?: _result?*, _input?*&
+    local   _after, _before, _continue
     _continue   = 1
     _after      = 0
     _before     = 0
 
+    local   _target, _r1, _r2
     restore _target, _r1, _r2
-    _target     equ
 
     local _syntax_error
     _syntax_error = 0
@@ -221,21 +218,20 @@ macro _expand_local_label?: _result?*, _input?*, _follow?:0
     else match _ ., _input
         _syntax_error = 1
     end match
-
     _inline_if (_syntax_error), err "Space can't follow dot"
 
     match  _1= . _local _2, _input
         _expand_local_label _r1, _1
-        _expand_local_label _r2, _2, 1
+        _expand_local_label _r2, _2
+        _target equ `_local
         _before = 1
         _after  = 1
-        _target equ `_local
     else match . _local _, _input
-        _expand_local_label _result, _, 1
+        _expand_local_label _r1, _
         _target equ `_local
         _after  = 1
     else match _= . _local, _input
-        _expand_local_label _result, _
+        _expand_local_label _r1, _
         _target equ `_local
         _before = 1
     else match . _local, _input
@@ -246,57 +242,31 @@ macro _expand_local_label?: _result?*, _input?*, _follow?:0
     end match
 
     if (_continue)
-        local _is_symbol, _new_target
-        _new_target equ ".", _target
-
-        macro _check_symbol? _order?*, str?*
-            _is_symbol = 0
-            _iterate_string char, str
-                _order
-                    _inline_if ((char >= 'a') & (char <= 'z')), _is_symbol = 1
-                    break
-            _end_iterate_string
-        end macro
-
         macro eval? _variable?*, line?&
             eval "_variable equ ", line
         end macro
 
-        _check_symbol forward, _target
-        if (~(_is_symbol))
-            _new_target     equ _target
-            _inline_if      (_target = "."), err "No several dot can be consecutive"
-        end if
-
-        local _result_str, _r1_str, _r2_str
-        match _, _result
-            _result_str equ `_
-        end match
-        match _, _r1
-            _r1_str     equ `_
-        end match
-        match _, _r2
-            _r2_str     equ `_
-        end match
+        iterate i, _r1, _r2
+            local i#_str
+            match _, i
+                i#_str  equ `_
+            end match
+        end iterate
 
         if (_before)
             _inline_if (_after),\
-                <eval _result, _r1_str, " ", _last_label, _new_target, _r2_str>,\
-                <eval _result, _result_str, " ", _last_label, _new_target>
-        else if (_after)
-            _inline_if (~(_follow)),\
-                    <eval _result, _last_label, _new_target, _result_str>,\
-                    <eval _result, _new_target, _result_str>
-        else
-            _inline_if (~(_follow)),\
-                    <eval _result, _last_label, _new_target>,\
-                    <eval _result, _new_target>
+                <eval _result, _r1_str, " ", _last_label, ".", _target, _r2_str>,\
+                <eval _result, _r1_str, " ", _last_label, ".", _target>
+        else    
+            _inline_if (_after),\
+                <eval _result, _last_label, ".", _target, _r1_str>,\
+                <eval _result, _last_label, ".", _target>
         end if
         purge eval?, _check_symbol?
     end if
 end macro
 
-macro _expand_operator?: _symbol?*, _result?*, _input?*
+macro _expand_operator?: _symbol?*, _result?*, _input?*&
     local _r1, _r2, _continue
     irpv _value, _symbol
         _continue = 0
@@ -347,16 +317,8 @@ macro _interpret_line?:
         _symbol equ   *,   *
         _symbol equ   /,   /
 
-        _expand_operator _symbol, _new_params, _new_params
-    
-        match _, _new_params
-            display "`_ = ", `_, $A
-        end match
-        err ""
-    
-;        local _input
-;        _input  equ _new_params
-;        _expand_local_label _new_params, _input
+        _expand_operator    _symbol, _new_params, _new_params
+        _expand_local_label _new_params, _new_params
 
         macro invoker?
         end macro
@@ -364,18 +326,27 @@ macro _interpret_line?:
             macro invoker?  
                 esc _
             end macro
-;            _search_label
+            _search_label
             match =MACRO? _line, _
                 _interpret_off
             end match
         end match
         invoker
         restruc ?
-        purge invoker?
+        purge   invoker?
     end macro
 end macro
 
+macro incbin? arguments?*&
+    match _file =, offset =, size, arguments
+        file _file:offset, size
+    else
+        file arguments
+    end match
+end macro
+
 _start_rept =: 0
+
 macro rept? count?*
     _signed count
     _start_rept     =: 1
@@ -387,15 +358,8 @@ end macro
 macro endr?!
         _reset_random_use
     end repeat
+    _restore_args _macro_name
     restore _start_rept, _random_label
-end macro
-
-macro incbin? arguments?*&
-    match _file =, offset =, size, arguments
-        file _file:offset, size
-    else
-        file arguments
-    end match
 end macro
 
 ;macro union?
@@ -416,44 +380,90 @@ end macro
 ;    restore _unionStart
 ;end macro
 
-_count_macro    =  0
-_start_macro    =: 0
+_start_macro    =:  0
+_macro_name     equ
 
 macro _define_macro? name?*
-    _count_macro = _count_macro + 1
     esc macro name line?&
-    restruc ?
-    purge   ?
     _reset_random_use
     local _new_line
     _new_line   equ line
-    repeat 9, i:1
-        match _ =, _rest, _new_line
+
+    _NARG   =: -1
+    match , _new_line
+        _NARG   = 0
+    end match
+
+    local _empty_arg
+    _empty_arg = 0
+    match _1 =, =, _2, _new_line
+        _empty_arg = 1
+    else match _ =, =,, _new_line
+        _empty_arg = 1
+    else match =, =, _, _new_line
+        _empty_arg = 1
+    else match =, =,, _new_line
+        _empty_arg = 1
+    end match
+
+    _inline_if (_empty_arg), err "Empty argument not allowed"
+
+    local _before
+    repeat 256, i:1
+        _before = ""
+        match _before =, _rest, _new_line
+            _expand_string _#name#_#i, `_before
             _new_line   equ _rest
-            _expand_string _a#i, `_
         else match _, _new_line
-            _new_line   equ
-            _expand_string _a#i, `_
-            _NARG       =: i
+            _before = `_
+        else match _ =,, _new_line
+            _before = `_
         else
-            _a#i        equ
+            _#name#_#i  = ""
         end match
+        if (_before <> "")
+            _expand_string _#name#_#i, _before
+            _new_line   equ
+            _NARG       = i
+        end if
     end repeat
+    _inline_if (_NARG eq -1), <err "Too many argument for the macro: ", `name>
     _start_macro    =:  1
     _random_label   =:  1
+    _macro_name     equ name
     _interpret_line
 end macro
 
-;macro shift?
-;    _inline_if (~(defined _start_macro)), err "SHIFT instruction must be in MACRO"
-;    repeat 8, i:1, j:2
-;        _a#i    equ _a#j
-;    end repeat
-;end macro
+macro shift?
+    _inline_if (~(_start_macro)), err "SHIFT instruction must be in MACRO"
+    local _shift_tmp
+    match _name, _macro_name
+        _shift_tmp  = _#_name#_1
+        repeat 255, i:1, j:2
+            _inline_if (~(_start_rept)),\
+                        _#_name#_#i =   _#_name#_#j,\
+                        _#_name#_#i =:  _#_name#_#j
+        end repeat
+        _inline_if (~(_start_rept)),\
+                    _#_name#_256    =   _shift_tmp,\
+                    _#_name#_256    =:  _shift_tmp
+    else
+        err "MACRO name is empty which lead to loss arguments"
+    end match
+end macro
+
+macro _restore_args? name?*
+    match _name, name
+        repeat 256, i:1
+            restore _#_name#_#i
+        end repeat
+    end match
+end macro
 
 macro endm?!
     purge ?
-    restore _start_macro, _random_label, _NARG
+;    _restore_args _macro_name
+    restore _start_macro, _random_label, _macro_name, _NARG
     esc end macro
 end macro
 
@@ -608,30 +618,6 @@ _IMPORT := 1
 _EXPORT := 2
 
 _last_label = ""
-_in_virtual = 0
-
-macro virtual? line*&
-    _in_virtual = 1
-    virtual line
-end macro
-
-macro end?.virtual?!
-    end virtual
-    _in_virtual = 0
-end macro
-
-macro _prefix_label? result?*, name?*
-    local _name
-    _name = `name
-    match . _NAME?, name
-        _inline_if (_last_label = ""), err "Local label must not be alone"
-        _name = _last_label
-        _append_string _name, `name
-    else
-        _last_label = `name
-    end match
-    result = _name
-end macro
 
 macro _search_label?
     display "SEARCH", $A
@@ -647,11 +633,11 @@ macro _search_label?
             end macro
         else
             local _is_label, _new_line, _type
-            _is_label = 0
-            _new_line   equ
+            _is_label   = 0
+            _type       = _LOCAL
 
-            _type = _LOCAL
-            iterate i, ::, :
+            _new_line   equ
+            iterate i, :==, ==:, ::, :
                 match i _, line
                     _is_label = 1
                     _new_line   equ _
@@ -659,29 +645,31 @@ macro _search_label?
                     _is_label = 1
                 end match
                 if (_is_label)
-                    _inline_if  (_in_virtual), _is_label = 0,\
-                                <_inline_if  (`i = "::"), _type = _EXPORT>
+                    _inline_if (_in_virtual | ((`i eq ":==") | (`i eq "==:"))), _is_label = 0,\
+                               <_inline_if  (`i = "::"), _type = _EXPORT>
                     break
                 end if
             end iterate
             if (_is_label)
-                local _name, _name_equ
-                _prefix_label _name, name
-                eval    "_name_equ equ ", _name
-                match _, _name_equ
-                    element _ : _count_symbols
+                match . _local, name
+                    err "Local label must not be alone"
+                else match _global . _local, name
+                else
+                    _last_label = `name
                 end match
-                if (used _name_equ)
+                element name : _count_symbols
+
+                if (used name)
                     _inline_if (~(_count_section)), err "getsecid: Unknown section"
                     _count_symbols = _count_symbols + 1
                     repeat 1, i:_count_symbols
-                        _label_#i               = _name
-                        _label_scope_#i         = _type
-                        _label_line_#i          = __line__
-                        _label_section_id_#i    = (_db - 1)
+                        _label_#i                   = `name
+                        _label_scope_#i             = _type
+                        _label_line_#i              = __line__
+                        _label_section_id_#i        = (_db - 1)
                         repeat 1, j:_db
                             virtual _area_#j
-                                _label_offset_#i        = ($ - $$)
+                                _label_offset_#i    = ($ - $$)
                             end virtual
                         end repeat
                     end repeat
@@ -697,10 +685,12 @@ macro _search_label?
                 end macro
             end if
         end match
+        restruc ?
         invoker
-        purge invoker?
+        purge   invoker?
     end struc
 end macro
 
 include "postpone.asm"
+_interpret_line
 

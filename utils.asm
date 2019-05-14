@@ -12,10 +12,12 @@ macro _check_kind?
     iterate <i, j>, "",string, $00,integer, 0.0,float
         macro _is_#j value?*, error?
             if (~(value eqtype i))
-                err "Operand must be of type: ", (`j)
+                local _error_msg
+                _error_msg  equ "Operand must be of type: ", (`j)
                 match _, error
-                    err error
+                    _error_msg  equ _error_msg, ".", string $0D0A, _
                 end match
+                err _error_msg
             end if
         end macro
     end iterate
@@ -67,16 +69,12 @@ macro forward?
     indx    (%)
 end macro
 
-macro _iterate_string?! iter?*, str?*
+macro _iterate_string? iter?*, str?*
+    local _string, _result, _char
     _is_string str
     _string = (+str)
-    _back_result        equ 
-    match _, _result
-        _back_result    equ _
-    end match
     _result equ
     repeat (lengthof (str)), i:0
-        local   _char
         _char   equ (string ((_string shr (i * $08)) and $FF))
         match _, _result
             _result equ _result,
@@ -84,14 +82,24 @@ macro _iterate_string?! iter?*, str?*
         _result equ _result _char
     end repeat
     match _, _result
-        iterate iter, _
+        outscope iterate iter, _
 end macro
 
 macro _end_iterate_string?!
         end iterate
     end match
-    restore _string
-    _result equ _back_result
+end macro
+
+macro _append_string? result?*, str?*
+    local   _result, _length, _char, _double
+    define  result
+    restore result
+    _result = result
+    _iterate_string char, str
+        _length = lengthof  (_result)
+        _result = string    (_result or (char shl (_length * $08)))
+    _end_iterate_string
+    result = _result
 end macro
 
 macro _find_item? predicate?*, argument?*, list?*&
@@ -120,6 +128,17 @@ macro _inline_if?: condition?*, true?*, false?
     end match
     invoker
     purge invoker?
+end macro
+
+_in_virtual = 0
+macro virtual? line*&
+    _in_virtual = 1
+    virtual line
+end macro
+
+macro end?.virtual?!
+    end virtual
+    _in_virtual = 0
 end macro
 
 _count_symbols  = 0
